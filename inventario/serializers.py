@@ -678,7 +678,6 @@ class InventarioFisicoSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("El stock real no puede ser negativo.")
         return value
 
-
     class Meta:
         model = InventarioFisico
         fields = [

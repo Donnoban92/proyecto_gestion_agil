@@ -1,3 +1,6 @@
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .views import (
     PaisViewSet, RegionViewSet, CiudadViewSet, ComunaViewSet, CargoViewSet,
     CustomUserViewSet, CategoriaViewSet, ProveedorViewSet, LoteViewSet, ProductoViewSet,
@@ -6,9 +9,6 @@ from .views import (
     HistorialPrecioProductoViewSet, KitViewSet, KitItemViewSet, AuditoriaViewSet,
     NotificacionViewSet, InventarioFisicoViewSet
 )
-
-from rest_framework.routers import DefaultRouter
-from django.urls import path, include
 
 # Instancia principal del router
 router = DefaultRouter()
@@ -37,4 +37,8 @@ router.register(r'inventario-fisico', InventarioFisicoViewSet)
 
 urlpatterns = [
     path('api/', include(router.urls)),
+    # JWT Autenticacion
+    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+
 ]

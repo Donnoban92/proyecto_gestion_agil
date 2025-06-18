@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from pathlib import Path
 import os
 from decouple import config
+from celery.schedules import crontab
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -46,6 +47,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "drf_spectacular",
     "inventario",
+    "django_celery_beat",
 ]
 
 AUTH_USER_MODEL = 'inventario.CustomUser'
@@ -68,8 +70,7 @@ CORS_ALLOWED_ORIGINS = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",
-        "rest_framework.authentication.BasicAuthentication",
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -178,3 +179,25 @@ LOGGING = {
     },
 }
 
+# Celery Configuration
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+CELERY_BEAT_SCHEDULE = {
+    "verificar_alertas_stock_bajo": {
+        "task": "inventario.tasks.verificar_alertas_stock_bajo",
+        "schedule": crontab(minute=0, hour="*/1"),  # cada hora
+    },
+    "verificar_alertas_silenciosas": {
+        "task": "inventario.tasks.verificar_alertas_sin_respuesta",
+        "schedule": crontab(minute=0, hour="*/12"),  # cada 12 horas
+    },
+    "generar_ordenes_automaticas_cada_hora": {
+        "task": "inventario.tasks.tarea_generar_ordenes_desde_alertas",
+        "schedule": crontab(minute=0, hour="*"),
+    },
+}
