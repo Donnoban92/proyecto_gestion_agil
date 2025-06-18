@@ -1,0 +1,14 @@
+# Entornos
+venv/
+.env
+
+# Archivos temporales
+*.log
+*.sqlite3
+__pycache__/
+*.pyc
+
+# Archivos de compilación y sistema
+.DS_Store
+.idea/
+.vscode/
