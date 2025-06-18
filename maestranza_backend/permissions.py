@@ -18,12 +18,12 @@ class IsInventoryManager(permissions.BasePermission):
 class IsInventoryManagerOrAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and (
-            request.user.rol in ['admin', 'inventario']
+            request.user.role in ['admin', 'inventario']
         )
 
 class IsAdminUserOnly(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.rol == 'admin'
+        return request.user.is_authenticated and request.user.role == 'admin'
 
 # Permite solo a compradores
 class IsComprador(permissions.BasePermission):

@@ -22,7 +22,7 @@ from rest_framework.views import APIView
 from .validators import (
     validar_precio_positivo, validar_stock_no_negativo, validar_stock_minimo_no_negativo
     )
-
+from maestranza_backend.utils.generar_rut_valido import generar_rut_valido
 locale.setlocale(locale.LC_TIME, "es_CL.utf8")
 comprobantes_storage = FileSystemStorage(location="media/comprobantes/")
 
@@ -128,38 +128,38 @@ class CustomUser(AbstractUser):
         return f"{self.first_name} {self.last_name}".strip()
 
     def clean(self):
-        if not re.match(r"^\+569\d{8}$", self.telefono):
-            raise ValidationError(["Teléfono debe seguir el formato +569XXXXXXXX"])
-        if not self.validate_rut(self.rut):
-            raise ValidationError(["RUT inválido. Formato correcto: 12.345.678-9"])
+        errores = []
 
-    @staticmethod
-    def validate_rut(rut):
-        """Valida el RUT chileno con DV"""
         try:
-            rut = rut.replace(".", "").replace("-", "").upper()
-            cuerpo, dv = rut[:-1], rut[-1]
+            if not re.match(r"^\+569\d{8}$", self.telefono):
+                errores.append("Teléfono debe seguir el formato +569XXXXXXXX")
+        except Exception:
+            errores.append("Error al validar el formato del teléfono.")
 
-            if not cuerpo.isdigit():
-                return False
+        try:
+            from maestranza_backend.utils.generar_rut_valido import generar_rut_valido
+            if not generar_rut_valido(self.rut):
+                errores.append("RUT inválido. Formato correcto: 12.345.678-9")
+        except Exception:
+            errores.append("Error al validar el RUT.")
 
-            suma = 0
-            multiplo = 2
-            for c in reversed(cuerpo):
-                suma += int(c) * multiplo
-                multiplo = 2 if multiplo == 7 else multiplo + 1
-
-            resto = 11 - (suma % 11)
-            dv_calculado = "0" if resto == 11 else "K" if resto == 10 else str(resto)
-
-            return dv_calculado == dv
-        except:
-            return False
+        if errores:
+            raise ValidationError(errores)
 
     def save(self, *args, **kwargs):
-        self.clean()
-        if self.telefono and not self.telefono.startswith("+56"):
-            self.telefono = f'+56{self.telefono.lstrip("+")}'
+        try:
+            self.clean()
+        except ValidationError as e:
+            raise e
+        except Exception:
+            raise ValidationError(["Error inesperado al validar usuario."])
+
+        try:
+            if self.telefono and not self.telefono.startswith("+56"):
+                self.telefono = f'+56{self.telefono.lstrip("+")}'
+        except Exception:
+            pass
+
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -184,7 +184,10 @@ class Categoria(models.Model):
         verbose_name_plural = "Categorías"
 
     def __str__(self):
-        return self.nombre
+        try:
+            return self.nombre
+        except Exception:
+            return "Categoría inválida"
 
 # Creacion del modelo PROVEEDOR
 class Proveedor(models.Model):
@@ -203,19 +206,23 @@ class Proveedor(models.Model):
     )
 
     def save(self, *args, **kwargs):
-        if self.telefono:
-            # Limpiar cualquier prefijo existente
-            cleaned_phone = self.telefono.lstrip("+")
-            if cleaned_phone.startswith("56"):
-                # Si ya tiene 56, solo agregamos el +
-                self.telefono = f"+{cleaned_phone}"
-            else:
-                # Si no tiene 56, agregamos +56
-                self.telefono = f"+56{cleaned_phone}"
+        try:
+            if self.telefono:
+                cleaned_phone = self.telefono.lstrip("+")
+                if cleaned_phone.startswith("56"):
+                    self.telefono = f"+{cleaned_phone}"
+                else:
+                    self.telefono = f"+56{cleaned_phone}"
+        except Exception:
+            pass  # En caso de error de formato, no interrumpir el guardado
+
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return self.nombre
+        try:
+            return self.nombre
+        except Exception:
+            return "Proveedor inválido"
 
     class Meta:
         verbose_name = "Proveedor"
@@ -232,7 +239,10 @@ class Lote(models.Model):
     observaciones = models.TextField(blank=True)
 
     def __str__(self):
-        return f"Lote {self.codigo} - {self.proveedor.nombre}"
+        try:
+            return f"Lote {self.codigo} - {self.proveedor.nombre}"
+        except Exception:
+            return "Lote inválido"
 
     class Meta:
         verbose_name = "Lote"
@@ -264,7 +274,10 @@ class Producto(models.Model):
         return self.stock <= self.stock_minimo
 
     def __str__(self):
-        return self.nombre
+        try:
+            return self.nombre
+        except Exception:
+            return "Producto inválido"
 
     class Meta:
         ordering = ["id"]
@@ -274,8 +287,8 @@ class Producto(models.Model):
             models.Index(fields=["nombre"]),
             models.Index(fields=["codigo_barra"]),
             models.Index(fields=["sku"]),
-    ]
-        
+        ]
+
 # Creacion del modelo de ALERTA-AUTOMATICA
 class AlertaStock(models.Model):
     ESTADOS = [
@@ -304,7 +317,10 @@ class AlertaStock(models.Model):
     usada_para_orden = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"Alerta de stock: {self.producto.nombre} - Estado: {self.estado}"
+        try:
+            return f"Alerta de stock: {self.producto.nombre} - Estado: {self.estado}"
+        except Exception:
+            return "Alerta de stock inválida"
 
     class Meta:
         verbose_name = "Alerta de Stock"
@@ -321,9 +337,9 @@ class OrdenAutomatica(models.Model):
         ('anulada','Anulada'),
         ('rechazada','Rechazada'),
         ("inactiva", "Inactiva"),
-        ]
+    ]
     alerta = models.ForeignKey(AlertaStock, on_delete=models.SET_NULL, null=True, blank=True)
-    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, null=True,blank=True)
+    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, null=True, blank=True)
     proveedor = models.ForeignKey(Proveedor, on_delete=models.PROTECT)
     cantidad_ordenada = models.PositiveIntegerField(default=0)
     fecha_creacion = models.DateTimeField(auto_now_add=True, null=True)
@@ -332,8 +348,11 @@ class OrdenAutomatica(models.Model):
     usada_para_ingreso = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"Orden Automática para proveedor {self.proveedor.nombre} - Estado: {self.estado}"
-    
+        try:
+            return f"Orden Automática para proveedor {self.proveedor.nombre} - Estado: {self.estado}"
+        except Exception:
+            return "Orden Automática inválida"
+
     class Meta:
         verbose_name = "Orden Automática"
         verbose_name_plural = "Órdenes Automáticas"
@@ -345,6 +364,12 @@ class OrdenAutomaticaItem(models.Model):
     alerta = models.ForeignKey(AlertaStock, on_delete=models.PROTECT)
     producto = models.ForeignKey(Producto, on_delete=models.PROTECT)
     cantidad_ordenada = models.PositiveIntegerField()
+
+    def __str__(self):
+        try:
+            return f"{self.cantidad_ordenada} x {self.producto.nombre} en orden #{self.orden.id}"
+        except Exception:
+            return "Ítem de orden inválido"
 
     class Meta:
         verbose_name = "Ítem de Orden"
@@ -365,11 +390,14 @@ class EntradaInventario(models.Model):
     total = models.PositiveIntegerField(default=0)
 
     def __str__(self):
-        return (
-            f"Entrada {self.cantidad} x {self.producto.nombre} - "
-            f"{self.fecha.strftime('%d de %m de %Y').capitalize()}"
-        )
-    
+        try:
+            return (
+                f"Entrada {self.cantidad} x {self.producto.nombre} - "
+                f"{self.fecha.strftime('%d de %m de %Y').capitalize()}"
+            )
+        except Exception:
+            return "Entrada de inventario inválida"
+
     class Meta:
         verbose_name = "Entrada de Inventario"
         verbose_name_plural = "Entradas de Inventario"
@@ -393,11 +421,14 @@ class SalidaInventario(models.Model):
     observacion = models.TextField(blank=True)
 
     def __str__(self):
-        return (
-            f"Salida {self.cantidad} x {self.producto.nombre} - "
-            f"{self.fecha.strftime('%d de %m de %Y').capitalize() if self.fecha else 'Sin fecha'}"
-        )
-        
+        try:
+            return (
+                f"Salida {self.cantidad} x {self.producto.nombre} - "
+                f"{self.fecha.strftime('%d de %m de %Y').capitalize() if self.fecha else 'Sin fecha'}"
+            )
+        except Exception:
+            return "Salida de inventario inválida"
+
     class Meta:
         verbose_name = "Salida de Inventario"
         verbose_name_plural = "Salidas de Inventario"
@@ -420,8 +451,11 @@ class CotizacionProveedor(models.Model):
     archivo_pdf = models.FileField(upload_to="cotizaciones/pdf/", null=True, blank=True)
 
     def __str__(self):
-        return f"Cotización #{self.id} - Orden {self.orden.id} ({self.estado})"
-    
+        try:
+            return f"Cotización #{self.id} - Orden {self.orden.id} ({self.estado})"
+        except Exception:
+            return "Cotización de proveedor inválida"
+
     class Meta:
         verbose_name = "Cotización de Proveedor"
         verbose_name_plural = "Cotizaciones de Proveedores"
@@ -435,7 +469,10 @@ class HistorialPrecioProducto(models.Model):
     fecha_registro = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"${self.precio} para {self.producto.nombre} ({self.fecha_registro.date()})"
+        try:
+            return f"${self.precio} para {self.producto.nombre} ({self.fecha_registro.date()})"
+        except Exception:
+            return "Historial de precio inválido"
 
     class Meta:
         verbose_name = "Historial de Precio"
@@ -448,11 +485,15 @@ class Kit(models.Model):
     descripcion = models.TextField(blank=True)
 
     def __str__(self):
-        return self.nombre
+        try:
+            return self.nombre
+        except Exception:
+            return "Kit inválido"
 
     class Meta:
         verbose_name = "Kit de Productos"
         verbose_name_plural = "Kits de Productos"
+
 
 # Creacion del modelo KIT-ITEM
 class KitItem(models.Model):
@@ -461,7 +502,10 @@ class KitItem(models.Model):
     cantidad = models.PositiveIntegerField()
 
     def __str__(self):
-        return f"{self.cantidad} x {self.producto.nombre} en {self.kit.nombre}"
+        try:
+            return f"{self.cantidad} x {self.producto.nombre} en {self.kit.nombre}"
+        except Exception:
+            return "Ítem de kit inválido"
     
     class Meta:
         verbose_name = "Ítem de Kit"
@@ -480,7 +524,10 @@ class Auditoria(models.Model):
     descripcion = models.TextField()
 
     def __str__(self):
-        return f"{self.usuario} - {self.accion} {self.modelo_afectado} ({self.id_objeto})"
+        try:
+            return f"{self.usuario} - {self.accion} {self.modelo_afectado} ({self.id_objeto})"
+        except Exception:
+            return "Registro de auditoría inválido"
 
     class Meta:
         verbose_name = "Registro de Auditoría"
@@ -495,12 +542,16 @@ class Notificacion(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Notificación para {self.usuario.username}"
+        try:
+            return f"Notificación para {self.usuario.username}"
+        except Exception:
+            return "Notificación inválida"
 
     class Meta:
         verbose_name = "Notificación"
         verbose_name_plural = "Notificaciones"
         ordering = ["-fecha_creacion"]
+
 
 # Creacion del modelo INVENTARIO-FISICO
 class InventarioFisico(models.Model):
@@ -515,7 +566,10 @@ class InventarioFisico(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"Inventario físico de {self.producto.nombre} - Real: {self.stock_real}"
+        try:
+            return f"Inventario físico de {self.producto.nombre} - Real: {self.stock_real}"
+        except Exception:
+            return "Inventario físico inválido"
 
     class Meta:
         verbose_name = "Inventario Físico"
