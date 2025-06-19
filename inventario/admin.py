@@ -50,8 +50,16 @@ class CargoAdmin(admin.ModelAdmin):
 
 @admin.register(Producto)
 class ProductoAdmin(admin.ModelAdmin):
+    def stock_actual(self, obj):
+        return obj.stock
+    stock_actual.short_description = "Stock actual"
+
+    def categoria(self, obj):
+        return obj.lote.categoria.nombre if obj.lote and obj.lote.categoria else None
+    categoria.short_description = "Categoría"
+
     list_display = ('id', 'nombre', 'sku', 'stock_actual', 'stock_minimo', 'precio', 'lote', 'categoria')
-    list_filter = ('categoria', 'lote__proveedor')
+    list_filter = ('lote__categoria', 'lote__proveedor')
     search_fields = ('nombre', 'sku', 'codigo_barra')
     autocomplete_fields = ('lote',)
     ordering = ('nombre',)
@@ -86,6 +94,14 @@ class SalidaInventarioAdmin(admin.ModelAdmin):
 
 @admin.register(InventarioFisico)
 class InventarioFisicoAdmin(admin.ModelAdmin):
+    def stock_registrado(self, obj):
+        return obj.producto.stock
+    stock_registrado.short_description = "Stock registrado"
+
+    def fecha(self, obj):
+        return obj.fecha_conteo
+    fecha.short_description = "Fecha"
+
     list_display = ('id', 'producto', 'stock_registrado', 'stock_real', 'diferencia', 'fecha')
     search_fields = ('producto__nombre',)
 
@@ -95,8 +111,8 @@ class InventarioFisicoAdmin(admin.ModelAdmin):
 
 @admin.register(AlertaStock)
 class AlertaStockAdmin(admin.ModelAdmin):
-    list_display = ('id', 'producto', 'stock_actual', 'umbral', 'activa', 'fecha_creacion')
-    list_filter = ('activa',)
+    list_display = ('id', 'producto', 'estado', 'usada_para_orden', 'fecha_creacion')
+    list_filter = ('estado', 'usada_para_orden')
     search_fields = ('producto__nombre',)
 
 @admin.register(Notificacion)
@@ -118,12 +134,22 @@ class OrdenAutomaticaItemInline(admin.TabularInline):
 class OrdenAutomaticaAdmin(admin.ModelAdmin):
     list_display = ('id', 'producto', 'proveedor', 'cantidad_ordenada', 'estado', 'fecha_creacion')
     list_filter = ('estado',)
+    search_fields = ('producto__nombre', 'proveedor__nombre', 'id')
     inlines = [OrdenAutomaticaItemInline]
     autocomplete_fields = ('producto', 'proveedor', 'alerta')
 
 @admin.register(CotizacionProveedor)
 class CotizacionProveedorAdmin(admin.ModelAdmin):
+    def archivo(self, obj):
+        return obj.archivo_pdf.name if obj.archivo_pdf else "—"
+    archivo.short_description = "Archivo PDF"
+
+    def fecha(self, obj):
+        return obj.fecha_creacion
+    fecha.short_description = "Fecha creación"
+
     list_display = ('id', 'orden', 'archivo', 'fecha')
+    search_fields = ('orden__producto__nombre', 'orden__proveedor__nombre', 'id')
     autocomplete_fields = ('orden',)
 
 # =======================
@@ -137,8 +163,8 @@ class KitItemInline(admin.TabularInline):
 
 @admin.register(Kit)
 class KitAdmin(admin.ModelAdmin):
-    list_display = ('id', 'nombre', 'codigo')
-    search_fields = ('nombre', 'codigo')
+    list_display = ('id', 'nombre')
+    search_fields = ('nombre',)
     inlines = [KitItemInline]
 
 # =======================
@@ -147,7 +173,11 @@ class KitAdmin(admin.ModelAdmin):
 
 @admin.register(HistorialPrecioProducto)
 class HistorialPrecioAdmin(admin.ModelAdmin):
-    list_display = ('id', 'producto', 'precio_anterior', 'precio_nuevo', 'fecha')
+    def fecha(self, obj):
+        return obj.fecha_registro
+    fecha.short_description = "Fecha"
+
+    list_display = ('id', 'producto', 'proveedor', 'precio', 'fecha')
     list_filter = ('producto',)
 
 @admin.register(Auditoria)
@@ -166,4 +196,3 @@ class CustomUserAdmin(admin.ModelAdmin):
     list_filter = ('is_staff', 'is_superuser', 'cargo')
     search_fields = ('username', 'rut', 'email')
     autocomplete_fields = ('comuna', 'cargo')
-
