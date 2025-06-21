@@ -74,8 +74,31 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",  # ✅ añadido para evitar warning
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": config("API_PAGE_SIZE", default=100, cast=int),
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'API Maestranzas Unidos S.A.',
+    'DESCRIPTION': 'Documentación de endpoints del sistema de inventario.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SCHEMA_PATH_PREFIX': '/api/',
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SWAGGER_UI_SETTINGS': {
+        'persistAuthorization': True,
+        'displayOperationId': True,
+    },
+    'SECURITY': [{'BearerAuth': []}],
+    'COMPONENTS': {
+        'securitySchemes': {
+            'BearerAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+            }
+        }
+    }
 }
 
 ROOT_URLCONF = 'maestranza_backend.urls'
@@ -150,25 +173,35 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+AUDIT_LOG_FILE = os.path.join(LOG_DIR, "audit.log")
+ERROR_LOG_FILE = os.path.join(LOG_DIR, "errors.log")
+
+LOG_LEVEL = config("LOG_LEVEL", default="INFO")
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "handlers": {
         "audit_file": {
             "class": "logging.FileHandler",
-            "filename": config("AUDIT_LOG_FILE"),
-            "level": config("LOG_LEVEL", default="INFO"),
+            "filename": AUDIT_LOG_FILE,
+            "level": LOG_LEVEL,
         },
         "error_file": {
             "class": "logging.FileHandler",
-            "filename": config("ERROR_LOG_FILE"),
+            "filename": ERROR_LOG_FILE,
             "level": "ERROR",
         },
     },
     "loggers": {
         "audit": {
             "handlers": ["audit_file"],
-            "level": "INFO",
+            "level": LOG_LEVEL,
             "propagate": False,
         },
         "django.request": {

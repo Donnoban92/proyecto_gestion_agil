@@ -13,6 +13,7 @@ from django.core.validators import MinLengthValidator, RegexValidator
 from django.db import models
 from django.http import FileResponse, Http404
 from django.utils import timezone
+from django.core.validators import MinValueValidator
 
 # Django REST Framework
 from rest_framework.permissions import IsAuthenticated
@@ -137,8 +138,8 @@ class CustomUser(AbstractUser):
             errores.append("Error al validar el formato del teléfono.")
 
         try:
-            from maestranza_backend.utils.generar_rut_valido import generar_rut_valido
-            if not generar_rut_valido(self.rut):
+            from maestranza_backend.utils.validar_rut import validar_rut
+            if not validar_rut(self.rut):
                 errores.append("RUT inválido. Formato correcto: 12.345.678-9")
         except Exception:
             errores.append("Error al validar el RUT.")
@@ -147,18 +148,20 @@ class CustomUser(AbstractUser):
             raise ValidationError(errores)
 
     def save(self, *args, **kwargs):
+        # Primero intenta formatear el teléfono antes de validar
+        try:
+            if self.telefono and not self.telefono.startswith("+56"):
+                self.telefono = f'+56{self.telefono.lstrip("+")}'
+        except Exception:
+            pass
+
+        # Luego validamos
         try:
             self.clean()
         except ValidationError as e:
             raise e
         except Exception:
             raise ValidationError(["Error inesperado al validar usuario."])
-
-        try:
-            if self.telefono and not self.telefono.startswith("+56"):
-                self.telefono = f'+56{self.telefono.lstrip("+")}'
-        except Exception:
-            pass
 
         super().save(*args, **kwargs)
 
@@ -185,9 +188,10 @@ class Categoria(models.Model):
 
     def __str__(self):
         try:
-            return self.nombre
+            return self.nombre if self.nombre else "Categoría sin nombre"
         except Exception:
             return "Categoría inválida"
+
 
 # Creacion del modelo PROVEEDOR
 class Proveedor(models.Model):
@@ -243,6 +247,16 @@ class Lote(models.Model):
             return f"Lote {self.codigo} - {self.proveedor.nombre}"
         except Exception:
             return "Lote inválido"
+        
+    def clean(self):
+        try:
+            if self.fecha_vencimiento and self.fecha_fabricacion:
+                if self.fecha_vencimiento < self.fecha_fabricacion:
+                    raise ValidationError("La fecha de vencimiento no puede ser anterior a la de fabricación.")
+        except TypeError:
+            raise ValidationError("Error de tipo en fechas: asegúrate de que ambas fechas sean válidas.")
+        except Exception as e:
+            raise ValidationError(f"Error inesperado al validar las fechas del lote: {str(e)}")
 
     class Meta:
         verbose_name = "Lote"
@@ -341,7 +355,7 @@ class OrdenAutomatica(models.Model):
     alerta = models.ForeignKey(AlertaStock, on_delete=models.SET_NULL, null=True, blank=True)
     producto = models.ForeignKey(Producto, on_delete=models.PROTECT, null=True, blank=True)
     proveedor = models.ForeignKey(Proveedor, on_delete=models.PROTECT)
-    cantidad_ordenada = models.PositiveIntegerField(default=0)
+    cantidad_ordenada = models.PositiveIntegerField(default=1,validators=[MinValueValidator(1)])
     fecha_creacion = models.DateTimeField(auto_now_add=True, null=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True, null=True)
     estado = models.CharField(max_length=32, choices=ESTADOS, default="pendiente")
@@ -363,7 +377,7 @@ class OrdenAutomaticaItem(models.Model):
     orden = models.ForeignKey(OrdenAutomatica, related_name="items", on_delete=models.CASCADE)
     alerta = models.ForeignKey(AlertaStock, on_delete=models.PROTECT)
     producto = models.ForeignKey(Producto, on_delete=models.PROTECT)
-    cantidad_ordenada = models.PositiveIntegerField()
+    cantidad_ordenada = models.PositiveIntegerField(default=1,validators=[MinValueValidator(1)])
 
     def __str__(self):
         try:
@@ -494,7 +508,6 @@ class Kit(models.Model):
         verbose_name = "Kit de Productos"
         verbose_name_plural = "Kits de Productos"
 
-
 # Creacion del modelo KIT-ITEM
 class KitItem(models.Model):
     kit = models.ForeignKey(Kit, related_name="items", on_delete=models.CASCADE)
@@ -551,7 +564,6 @@ class Notificacion(models.Model):
         verbose_name = "Notificación"
         verbose_name_plural = "Notificaciones"
         ordering = ["-fecha_creacion"]
-
 
 # Creacion del modelo INVENTARIO-FISICO
 class InventarioFisico(models.Model):

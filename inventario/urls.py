@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from .views import (
     PaisViewSet, RegionViewSet, CiudadViewSet, ComunaViewSet, CargoViewSet,
     CustomUserViewSet, CategoriaViewSet, ProveedorViewSet, LoteViewSet, ProductoViewSet,
@@ -10,7 +11,6 @@ from .views import (
     NotificacionViewSet, InventarioFisicoViewSet
 )
 
-# Instancia principal del router
 router = DefaultRouter()
 router.register(r'paises', PaisViewSet)
 router.register(r'regiones', RegionViewSet)
@@ -32,13 +32,16 @@ router.register(r'historial-precios', HistorialPrecioProductoViewSet)
 router.register(r'kits', KitViewSet)
 router.register(r'kits-items', KitItemViewSet)
 router.register(r'auditorias', AuditoriaViewSet)
-router.register(r'notificaciones', NotificacionViewSet)
+router.register(r'notificaciones', NotificacionViewSet, basename='notificacion')
 router.register(r'inventario-fisico', InventarioFisicoViewSet)
 
 urlpatterns = [
-    path('api/', include(router.urls)),
+    path('', include(router.urls)),
     # JWT Autenticacion
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+
+    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema")),
 
 ]

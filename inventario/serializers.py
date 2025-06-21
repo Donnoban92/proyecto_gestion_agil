@@ -1,6 +1,7 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from maestranza_backend.utils.generar_rut_valido import generar_rut_valido
-from validators import (
+from inventario.validators import (
     validar_stock_minimo_no_negativo, validar_codigo_barra, validar_sku_formato,
     validar_fecha_fabricacion, validar_fechas_lote, 
     )
@@ -328,6 +329,7 @@ class ProductoSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['fecha_actualizacion', 'sku']
 
+    @extend_schema_field(bool)
     def get_is_low_stock(self, obj):
         try:
             return obj.stock <= obj.stock_minimo
@@ -672,6 +674,7 @@ class CotizacionProveedorSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["fecha_creacion", "fecha_actualizacion"]
 
+    @extend_schema_field(serializers.URLField)
     def get_archivo_pdf_url(self, obj):
         try:
             return obj.archivo_pdf.url if obj.archivo_pdf else None
@@ -858,4 +861,3 @@ class InventarioFisicoSerializer(serializers.ModelSerializer):
             'responsable_nombre',
             'diferencia',
         ]
-

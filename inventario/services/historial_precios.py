@@ -1,8 +1,7 @@
 from inventario.models import HistorialPrecioProducto
-from django.utils import timezone
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("audit")
 
 class PrecioService:
     @staticmethod
@@ -14,11 +13,10 @@ class PrecioService:
                 HistorialPrecioProducto.objects.create(
                     producto=producto,
                     proveedor=proveedor,
-                    precio=precio,
-                    fecha=timezone.now()
+                    precio=precio
                 )
         except Exception as e:
-            logger.error(f"Error al registrar precio para producto {producto.id}: {str(e)}")
+            logger.error(f"Error al registrar precio para producto {producto.id}: {e}")
 
     @staticmethod
     def obtener_ultimo_precio(producto, proveedor):
@@ -27,9 +25,9 @@ class PrecioService:
             return (
                 HistorialPrecioProducto.objects
                 .filter(producto=producto, proveedor=proveedor)
-                .order_by("-fecha")
+                .order_by("-fecha_registro")
                 .first()
             )
         except Exception as e:
-            logger.error(f"Error al obtener último precio para producto {producto.id}: {str(e)}")
+            logger.error(f"Error al obtener último precio para producto {producto.id}: {e}")
             return None
