@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Registro de Inventario</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .navbar-nav-centered {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    .navbar-nav-centered .nav-link {
+      padding-left: 1rem;
+      padding-right: 1rem;
+      font-size: 0.95rem;
+      white-space: nowrap;
+    }
+    @media (max-width: 991px) {
+      .navbar-nav-centered {
+        position: static;
+        transform: none;
+        white-space: normal;
+      }
+    }
+  </style>
+</head>
+<body class="bg-light">
+
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow position-relative">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="dashboard.html">Maestranza</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse justify-content-center" id="navbarNav">
+        <ul class="navbar-nav navbar-nav-centered">
+          <li class="nav-item"><a class="nav-link" href="dashboard.html">Inicio</a></li>
+          <li class="nav-item"><a class="nav-link" href="productos.html">Productos</a></li>
+          <li class="nav-item"><a class="nav-link" href="lotes.html">Lotes</a></li>
+          <li class="nav-item"><a class="nav-link" href="proveedores.html">Proveedores</a></li>
+          <li class="nav-item"><a class="nav-link active" href="inventario.html">Registro Inventario</a></li>
+          <li class="nav-item"><a class="nav-link" href="alertas.html">Alertas</a></li>
+          <li class="nav-item"><a class="nav-link" href="ordenes.html">Órdenes</a></li>
+          <li class="nav-item"><a class="nav-link" href="cotizaciones.html">Cotizaciones</a></li>
+          <li class="nav-item"><a class="nav-link" href="inventario-fisico.html">Inventario Físico</a></li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Contenido -->
+  <div class="container mt-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h2>Registro de Inventario</h2>
+      <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalMovimiento">+ Registrar movimiento</button>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-bordered table-hover">
+        <thead class="table-primary">
+          <tr>
+            <th>ID</th>
+            <th>Producto</th>
+            <th>Cantidad</th>
+            <th>Tipo de movimiento</th>
+            <th>Fecha</th>
+            <th>Responsable</th>
+          </tr>
+        </thead>
+        <tbody id="tabla-movimientos">
+          <!-- JS insertará aquí -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Modal: Movimiento de inventario -->
+  <div class="modal fade" id="modalMovimiento" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form id="formMovimiento">
+          <div class="modal-header">
+            <h5 class="modal-title">Nuevo Movimiento</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label class="form-label">Producto ID</label>
+              <input type="number" name="producto_id" class="form-control" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Cantidad</label>
+              <input type="number" name="cantidad" class="form-control" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Tipo de movimiento</label>
+              <select name="tipo" class="form-select" required>
+                <option value="">Seleccione</option>
+                <option value="entrada">Entrada</option>
+                <option value="salida">Salida</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Responsable</label>
+              <input type="text" name="responsable" class="form-control" required>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-primary">Guardar</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const tabla = document.getElementById("tabla-movimientos");
+
+    function cargarMovimientos() {
+      fetch("/movimientos/")
+        .then(res => res.json())
+        .then(data => {
+          tabla.innerHTML = "";
+          data.forEach(mov => {
+            tabla.innerHTML += `
+              <tr>
+                <td>${mov.id}</td>
+                <td>${mov.producto_nombre || "N/A"}</td>
+                <td>${mov.cantidad}</td>
+                <td class="${mov.tipo === 'salida' ? 'text-danger' : 'text-success'} fw-semibold text-capitalize">${mov.tipo}</td>
+                <td>${mov.fecha}</td>
+                <td>${mov.responsable}</td>
+              </tr>`;
+          });
+        });
+    }
+
+    document.getElementById("formMovimiento").addEventListener("submit", function (e) {
+      e.preventDefault();
+      const datos = Object.fromEntries(new FormData(e.target).entries());
+      fetch("/movimientos/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(datos)
+      })
+        .then(res => res.ok ? res.json() : Promise.reject(res))
+        .then(() => {
+          e.target.reset();
+          bootstrap.Modal.getInstance(document.getElementById('modalMovimiento')).hide();
+          cargarMovimientos();
+        })
+        .catch(() => alert("Error al registrar movimiento."));
+    });
+
+    cargarMovimientos();
+  </script>
+</body>
+</html>

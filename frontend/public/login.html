@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Iniciar sesión</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/frontend/public/css/">
+  <style>
+    body {
+      background-image: url(/frontend/public/css/login-maestranza.png);
+    }
+    .login-container {
+      max-width: 400px;
+      margin: 100px auto;
+      background-color: white;
+      padding: 2rem;
+      border-radius: 0.75rem;
+      box-shadow: 0 0 20px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="login-container">
+    <h3 class="mb-4 text-center">Iniciar Sesión</h3>
+    <form id="formLogin">
+    <div class="mb-3">
+        <label class="form-label">Usuario</label>
+        <input type="text" name="username" class="form-control" required placeholder="usuario123">
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Contraseña</label>
+        <input type="password" name="password" class="form-control" required placeholder="********">
+    </div>
+    <button class="btn btn-primary w-100">Ingresar</button>
+    </form>
+    <div class="mt-3 text-danger text-center" id="errorLogin"></div>
+  </div>
+
+  <!-- Scripts -->
+  <script>
+    const form = document.getElementById("formLogin");
+    const errorMsg = document.getElementById("errorLogin");
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      const datos = Object.fromEntries(new FormData(form).entries());
+
+      fetch("http://127.0.0.1:8000/api/api/token/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(datos)
+        })
+        .then(res => res.ok ? res.json() : Promise.reject("Credenciales incorrectas"))
+        .then(data => {
+        localStorage.setItem("access", data.access); // token JWT
+        localStorage.setItem("refresh", data.refresh);
+        window.location.href = "dashboard.html";
+        })
+        .catch(err => {
+        errorMsg.innerText = typeof err === "string" ? err : "Error de conexión.";
+        });
+
+    });
+  </script>
+
+</body>
+</html>
