@@ -1,10 +1,11 @@
 from django.shortcuts import render
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import status,viewsets, permissions, filters
+from rest_framework import status,viewsets, permissions, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from inventario.filters import OrdenAutomaticaFilter
+from inventario.services.auditoria import AuditoriaService
 from maestranza_backend.utils.generar_rut_valido import generar_rut_valido
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.permissions import IsAuthenticated
@@ -131,10 +132,6 @@ class CargoViewSet(viewsets.ModelViewSet):
     ),
 )
 class CustomUserViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet profesional para la gestión de usuarios en Maestranzas Unidos S.A.
-    Incluye control de permisos, validación de roles y seguridad sobre campos clave.
-    """
     queryset = CustomUser.objects.select_related('comuna__ciudad__region__pais', 'cargo').all()
     serializer_class = CustomUserSerializer
     permission_classes = [permissions.IsAuthenticated]  # Se puede personalizar por rol
@@ -145,23 +142,65 @@ class CustomUserViewSet(viewsets.ModelViewSet):
     ordering = ['-date_joined']
 
     def perform_create(self, serializer):
-        # Forzar lower case en correo y proteger correo duplicado en capa de vista
-        validated_data = serializer.validated_data
-        correo = validated_data.get("correo")
-        if correo:
-            validated_data["correo"] = correo.lower()
-        serializer.save()
+        try:
+            validated_data = serializer.validated_data
+            correo = validated_data.get("correo")
+            if correo:
+                validated_data["correo"] = correo.lower()
+
+            usuario = serializer.save()
+
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="CustomUser",
+                id_objeto=usuario.id,
+                accion="crear",
+                descripcion=f"Usuario '{usuario.username}' creado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error inesperado al crear usuario: {str(e)}")
 
     def perform_update(self, serializer):
-        # Evitamos que se modifique el correo si ya existe
-        instance = self.get_object()
-        validated_data = serializer.validated_data
-        correo = validated_data.get("correo", instance.correo)
+        try:
+            instance = self.get_object()
+            validated_data = serializer.validated_data
+            nuevo_correo = validated_data.get("correo", instance.correo)
 
-        if instance.correo != correo:
-            raise serializers.ValidationError("El correo no puede ser modificado una vez registrado.")
+            if instance.correo != nuevo_correo:
+                raise ValidationError("El correo no puede ser modificado una vez registrado.")
 
-        serializer.save()
+            usuario = serializer.save()
+
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="CustomUser",
+                id_objeto=usuario.id,
+                accion="actualizar",
+                descripcion=f"Usuario '{usuario.username}' actualizado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error inesperado al actualizar usuario: {str(e)}")
+
+    
+    def perform_destroy(self, instance):
+        try:
+            instance.is_active = False
+            instance.save(update_fields=["is_active"])
+
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="CustomUser",
+                id_objeto=instance.id,
+                accion="eliminar",
+                descripcion=f"Usuario '{instance.username}' desactivado desde la API."
+            )
+
+        except Exception as e:
+            raise serializers.ValidationError(f"Error al desactivar el usuario: {str(e)}")
 
 # Creacion del viewset CATEGORIA
 @extend_schema_view(
@@ -204,16 +243,63 @@ class CategoriaViewSet(viewsets.ModelViewSet):
     ordering_fields = ['nombre', 'id']
     ordering = ['nombre']
 
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
+    def perform_create(self, serializer):
+        try:
+            categoria = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Categoria",
+                id_objeto=categoria.id,
+                accion="crear",
+                descripcion=f"Categoría '{categoria.nombre}' creada desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al crear la categoría: {str(e)}")
+
+    def perform_update(self, serializer):
+        try:
+            categoria = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Categoria",
+                id_objeto=categoria.id,
+                accion="actualizar",
+                descripcion=f"Categoría '{categoria.nombre}' actualizada desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al actualizar la categoría: {str(e)}")
+
+    def perform_destroy(self, instance):
         try:
             if instance.producto_set.exists():
-                raise serializers.ValidationError({
-                    "error": "No se puede eliminar la categoría porque está asociada a productos."
-                })
-            return super().destroy(request, *args, **kwargs)
+                raise ValidationError("No se puede eliminar la categoría porque está asociada a productos.")
+            id_categoria = instance.id
+            nombre = instance.nombre
+            instance.delete()
+
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Categoria",
+                id_objeto=id_categoria,
+                accion="eliminar",
+                descripcion=f"Categoría '{nombre}' eliminada desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
         except Exception as e:
-            raise serializers.ValidationError({"error": f"No se pudo eliminar la categoría: {str(e)}"})
+            raise ValidationError(f"Error inesperado al eliminar la categoría: {str(e)}")
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(
+            {"detalle": "Categoría eliminada correctamente."},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 # Creacion del viewset PROVEEDOR
 @extend_schema_view(
@@ -258,20 +344,68 @@ class ProveedorViewSet(viewsets.ModelViewSet):
     ordering = ['id']
     permission_classes = [permissions.IsAuthenticated]
 
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
+    def perform_create(self, serializer):
+        try:
+            proveedor = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Proveedor",
+                id_objeto=proveedor.id,
+                accion="crear",
+                descripcion=f"Proveedor '{proveedor.nombre}' creado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al crear proveedor: {str(e)}")
+
+    def perform_update(self, serializer):
+        try:
+            proveedor = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Proveedor",
+                id_objeto=proveedor.id,
+                accion="actualizar",
+                descripcion=f"Proveedor '{proveedor.nombre}' actualizado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al actualizar proveedor: {str(e)}")
+
+    def perform_destroy(self, instance):
         try:
             if (
                 instance.lotes.exists() or
                 EntradaInventario.objects.filter(proveedor=instance).exists() or
                 Producto.objects.filter(lote__proveedor=instance).exists()
             ):
-                raise serializers.ValidationError({
-                    "error": "No se puede eliminar el proveedor porque está asociado a productos, lotes o entradas."
-                })
-            return super().destroy(request, *args, **kwargs)
+                raise ValidationError("No se puede eliminar el proveedor porque está asociado a productos, lotes o entradas.")
+
+            proveedor_id = instance.id
+            proveedor_nombre = instance.nombre
+            instance.delete()
+
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Proveedor",
+                id_objeto=proveedor_id,
+                accion="eliminar",
+                descripcion=f"Proveedor '{proveedor_nombre}' eliminado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
         except Exception as e:
-            raise serializers.ValidationError({"error": f"No se pudo eliminar el proveedor: {str(e)}"})
+            raise ValidationError(f"Error al eliminar proveedor: {str(e)}")
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(
+            {"detalle": "Proveedor eliminado correctamente."},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 # Creacion del viewset LOTE
 @extend_schema_view(
@@ -316,16 +450,62 @@ class LoteViewSet(viewsets.ModelViewSet):
     ordering = ["-fecha_fabricacion"]
     permission_classes = [permissions.IsAuthenticated]
 
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
+    def perform_create(self, serializer):
+        try:
+            lote = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Lote",
+                id_objeto=lote.id,
+                accion="crear",
+                descripcion=f"Lote '{lote.codigo}' creado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al crear el lote: {str(e)}")
+
+    def perform_update(self, serializer):
+        try:
+            lote = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Lote",
+                id_objeto=lote.id,
+                accion="actualizar",
+                descripcion=f"Lote '{lote.codigo}' actualizado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al actualizar el lote: {str(e)}")
+
+    def perform_destroy(self, instance):
         try:
             if Producto.objects.filter(lote=instance).exists():
-                raise serializers.ValidationError({
-                    "error": "No se puede eliminar el lote porque hay productos asociados."
-                })
-            return super().destroy(request, *args, **kwargs)
+                raise ValidationError("No se puede eliminar el lote porque hay productos asociados.")
+            id_lote = instance.id
+            codigo = instance.codigo
+            instance.delete()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Lote",
+                id_objeto=id_lote,
+                accion="eliminar",
+                descripcion=f"Lote '{codigo}' eliminado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
         except Exception as e:
-            raise serializers.ValidationError({"error": f"No se pudo eliminar el lote: {str(e)}"})
+            raise ValidationError(f"Error al eliminar el lote: {str(e)}")
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(
+            {"detalle": "Lote eliminado correctamente."},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 # Creacion del viewset PRODUCTO
 @extend_schema_view(
@@ -361,10 +541,6 @@ class LoteViewSet(viewsets.ModelViewSet):
     ),
 )
 class ProductoViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet profesional para la gestión de productos en Maestranzas Unidos S.A.
-    Incluye lógica de stock mínimo, protección de SKU y seguridad en borrado.
-    """
     queryset = Producto.objects.select_related('lote__proveedor', 'lote__categoria').all()
     serializer_class = ProductoSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -374,19 +550,72 @@ class ProductoViewSet(viewsets.ModelViewSet):
     ordering_fields = ['nombre', 'precio', 'stock', 'fecha_actualizacion']
     ordering = ['id']
 
+    def perform_create(self, serializer):
+        try:
+            producto = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Producto",
+                id_objeto=producto.id,
+                accion="crear",
+                descripcion=f"Producto '{producto.nombre}' creado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al crear producto: {str(e)}")
+
+    def perform_update(self, serializer):
+        try:
+            producto = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Producto",
+                id_objeto=producto.id,
+                accion="actualizar",
+                descripcion=f"Producto '{producto.nombre}' actualizado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al actualizar producto: {str(e)}")
+
+    def perform_destroy(self, instance):
+        try:
+            if instance.stock > 0:
+                raise ValidationError("No se puede eliminar un producto con stock disponible.")
+            producto_id = instance.id
+            nombre = instance.nombre
+            instance.delete()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Producto",
+                id_objeto=producto_id,
+                accion="eliminar",
+                descripcion=f"Producto '{nombre}' eliminado desde la API."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al eliminar producto: {str(e)}")
+
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            if instance.stock > 0:
-                raise ValidationError({"error": "No se puede eliminar un producto con stock disponible."})
-            return super().destroy(request, *args, **kwargs)
+            self.perform_destroy(instance)
+            return Response(
+                {"detalle": "Producto eliminado correctamente."},
+                status=status.HTTP_204_NO_CONTENT
+            )
         except Producto.DoesNotExist:
             return Response({"detail": "Producto no encontrado."}, status=status.HTTP_404_NOT_FOUND)
         except ValidationError as ve:
-            return Response(ve.detail, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Error inesperado al eliminar producto: {str(e)}"},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": f"Error inesperado al eliminar producto: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 # Creación del viewset ALERTASTOCK
 @extend_schema_view(
@@ -422,11 +651,9 @@ class ProductoViewSet(viewsets.ModelViewSet):
     ),
 )
 class AlertaStockViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet para la gestión de alertas de stock.
-    Solo accesible por usuarios autenticados, preferentemente administradores o gestores de inventario.
-    """
-    queryset = AlertaStock.objects.select_related("producto__lote__proveedor", "producto__lote__categoria").all()
+    queryset = AlertaStock.objects.select_related(
+        "producto__lote__proveedor", "producto__lote__categoria"
+    ).all()
     serializer_class = AlertaStockSerializer
     permission_classes = [permissions.IsAuthenticated, IsInventoryManager]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -435,20 +662,55 @@ class AlertaStockViewSet(viewsets.ModelViewSet):
     ordering_fields = ['fecha_creacion', 'estado']
     ordering = ['-fecha_creacion']
 
-    def destroy(self, request, *args, **kwargs):
-        alerta = self.get_object()
+    def perform_create(self, serializer):
         try:
-            if alerta.estado in ['archivada', 'silenciada'] or alerta.usada_para_orden:
-                return Response(
-                    {"error": "No se puede eliminar una alerta que ya fue procesada o archivada."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            return super().destroy(request, *args, **kwargs)
-        except Exception as e:
-            return Response(
-                {"error": f"Ocurrió un error al intentar eliminar la alerta: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            alerta = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="AlertaStock",
+                id_objeto=alerta.id,
+                accion="crear",
+                descripcion=f"Alerta creada para el producto '{alerta.producto.nombre}' con stock {alerta.producto.stock}."
             )
+        except Exception as e:
+            raise ValidationError(f"Error al crear la alerta: {str(e)}")
+
+    def perform_update(self, serializer):
+        try:
+            alerta = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="AlertaStock",
+                id_objeto=alerta.id,
+                accion="actualizar",
+                descripcion=f"Alerta de producto '{alerta.producto.nombre}' actualizada. Estado: {alerta.estado}."
+            )
+        except Exception as e:
+            raise ValidationError(f"Error al actualizar la alerta: {str(e)}")
+
+    def perform_destroy(self, instance):
+        try:
+            if instance.estado in ['archivada', 'silenciada'] or instance.usada_para_orden:
+                raise ValidationError("No se puede eliminar una alerta que ya fue procesada o archivada.")
+            id_alerta = instance.id
+            producto = instance.producto.nombre
+            instance.delete()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="AlertaStock",
+                id_objeto=id_alerta,
+                accion="eliminar",
+                descripcion=f"Alerta eliminada del producto '{producto}'."
+            )
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error inesperado al eliminar la alerta: {str(e)}")
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response({"detalle": "Alerta eliminada correctamente."}, status=status.HTTP_204_NO_CONTENT)
 
 # Creación del viewset ORDENAUTOMATICA
 @extend_schema_view(
@@ -499,17 +761,56 @@ class OrdenAutomaticaViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        instance = serializer.save()
-        # Puedes emitir una señal aquí si deseas procesar tareas de forma asíncrona
-        return instance
+        try:
+            orden = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="OrdenAutomatica",
+                id_objeto=orden.id,
+                accion="crear",
+                descripcion=f"Orden automática creada para el producto '{orden.producto.nombre}' al proveedor '{orden.proveedor.nombre}'."
+            )
+        except Exception as e:
+            raise ValidationError(f"Error al crear orden automática: {str(e)}")
+
+    def perform_update(self, serializer):
+        try:
+            orden = self.get_object()
+            if orden.estado in ['completada', 'usada']:
+                raise ValidationError("No se puede actualizar una orden completada o usada.")
+            orden_actualizada = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="OrdenAutomatica",
+                id_objeto=orden_actualizada.id,
+                accion="actualizar",
+                descripcion=f"Orden actualizada. Estado: {orden_actualizada.estado}, proveedor: '{orden_actualizada.proveedor.nombre}'."
+            )
+        except Exception as e:
+            raise ValidationError(f"Error al actualizar la orden automática: {str(e)}")
 
     def destroy(self, request, *args, **kwargs):
-        orden = self.get_object()
-        if orden.estado in ['completada', 'usada']:
-            raise ValidationError("No se puede eliminar una orden completada o usada.")
-        orden.estado = 'eliminada'
-        orden.save()
-        return Response({"detalle": "Orden marcada como eliminada."}, status=status.HTTP_204_NO_CONTENT)
+        try:
+            orden = self.get_object()
+            if orden.estado in ['completada', 'usada']:
+                raise ValidationError("No se puede eliminar una orden completada o usada.")
+
+            orden.estado = 'eliminada'
+            orden.save(update_fields=['estado'])
+
+            AuditoriaService.registrar(
+                usuario=request.user,
+                modelo="OrdenAutomatica",
+                id_objeto=orden.id,
+                accion="eliminar",
+                descripcion=f"Orden automática para producto '{orden.producto.nombre}' marcada como eliminada."
+            )
+
+            return Response({"detalle": "Orden marcada como eliminada."}, status=status.HTTP_204_NO_CONTENT)
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al eliminar orden automática: {str(e)}")
 
 # Creación del viewset ORDENAUTOMATICA-ITEM
 @extend_schema_view(
@@ -617,27 +918,41 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
     permission_classes = [IsInventoryManagerOrAdmin]
 
     def perform_create(self, serializer):
-        orden = serializer.validated_data.get('orden', None)
+        try:
+            orden = serializer.validated_data.get('orden', None)
 
-        if orden:
-            if orden.estado != 'completada':
-                raise ValidationError("Solo se puede registrar una entrada desde una orden completada.")
-            if orden.usada_para_ingreso:
-                raise ValidationError("Esta orden ya fue utilizada para generar una entrada de inventario.")
+            if orden:
+                if orden.estado != 'completada':
+                    raise ValidationError("Solo se puede registrar una entrada desde una orden completada.")
+                if orden.usada_para_ingreso:
+                    raise ValidationError("Esta orden ya fue utilizada para generar una entrada de inventario.")
 
-        entrada = serializer.save()
+            entrada = serializer.save()
 
-        # Marcar la orden como usada para ingreso si aplica
-        if entrada.orden:
-            entrada.orden.usada_para_ingreso = True
-            entrada.orden.save(update_fields=['usada_para_ingreso'])
+            if entrada.orden:
+                entrada.orden.usada_para_ingreso = True
+                entrada.orden.save(update_fields=['usada_para_ingreso'])
 
-        # Actualizar stock del producto
-        producto = entrada.producto
-        producto.stock += entrada.cantidad
-        producto.save(update_fields=['stock'])
+            # Actualizar stock
+            producto = entrada.producto
+            producto.stock += entrada.cantidad
+            producto.save(update_fields=['stock'])
 
-        return entrada
+            # Auditoría
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="EntradaInventario",
+                id_objeto=entrada.id,
+                accion="crear",
+                descripcion=f"Entrada de {entrada.cantidad} unidades al producto '{producto.nombre}'"
+                             f"{' desde orden automática' if entrada.orden else ''}."
+            )
+
+            return entrada
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al registrar entrada: {str(e)}")
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -646,16 +961,32 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        if instance.orden:
-            raise ValidationError("No se puede eliminar una entrada asociada a una orden automática.")
-        
-        # Revertir stock
-        producto = instance.producto
-        producto.stock = max(0, producto.stock - instance.cantidad)
-        producto.save(update_fields=['stock'])
+        try:
+            instance = self.get_object()
+            if instance.orden:
+                raise ValidationError("No se puede eliminar una entrada asociada a una orden automática.")
 
-        return super().destroy(request, *args, **kwargs)
+            producto = instance.producto
+            cantidad_revertida = instance.cantidad
+            instance_id = instance.id
+            producto.stock = max(0, producto.stock - cantidad_revertida)
+            producto.save(update_fields=['stock'])
+
+            instance.delete()
+
+            AuditoriaService.registrar(
+                usuario=request.user,
+                modelo="EntradaInventario",
+                id_objeto=instance_id,
+                accion="eliminar",
+                descripcion=f"Eliminada entrada de inventario de {cantidad_revertida} unidades del producto '{producto.nombre}'."
+            )
+
+            return Response({"detalle": "Entrada eliminada correctamente."}, status=status.HTTP_204_NO_CONTENT)
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al eliminar la entrada: {str(e)}")
 
 # Creacion del viewset SALIDA-INVENTARIO
 @extend_schema_view(
@@ -698,31 +1029,59 @@ class SalidaInventarioViewSet(viewsets.ModelViewSet):
     permission_classes = [IsInventoryManagerOrAdmin]
 
     def perform_create(self, serializer):
-        producto = serializer.validated_data.get('producto')
-        cantidad = serializer.validated_data.get('cantidad')
+        try:
+            producto = serializer.validated_data.get('producto')
+            cantidad = serializer.validated_data.get('cantidad')
 
-        if cantidad > producto.stock:
-            raise ValidationError("No hay suficiente stock disponible para realizar la salida.")
+            if cantidad > producto.stock:
+                raise ValidationError("No hay suficiente stock disponible para realizar la salida.")
 
-        # Registrar salida y descontar stock
-        salida = serializer.save(responsable=self.request.user)
-        producto.stock -= cantidad
-        producto.save(update_fields=['stock'])
+            salida = serializer.save(responsable=self.request.user)
+            producto.stock -= cantidad
+            producto.save(update_fields=['stock'])
 
-        return salida
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="SalidaInventario",
+                id_objeto=salida.id,
+                accion="crear",
+                descripcion=f"Salida de {cantidad} unidades del producto '{producto.nombre}' por motivo '{salida.get_motivo_display()}'."
+            )
+
+            return salida
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al registrar salida: {str(e)}")
 
     def update(self, request, *args, **kwargs):
-        instance = self.get_object()
         raise ValidationError("No se permite la modificación de registros de salida una vez creados.")
 
     def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        # Reponer el stock al eliminar la salida
-        producto = instance.producto
-        producto.stock += instance.cantidad
-        producto.save(update_fields=['stock'])
+        try:
+            instance = self.get_object()
+            producto = instance.producto
+            cantidad_repuesta = instance.cantidad
+            salida_id = instance.id
 
-        return super().destroy(request, *args, **kwargs)
+            producto.stock += cantidad_repuesta
+            producto.save(update_fields=['stock'])
+
+            instance.delete()
+
+            AuditoriaService.registrar(
+                usuario=request.user,
+                modelo="SalidaInventario",
+                id_objeto=salida_id,
+                accion="eliminar",
+                descripcion=f"Eliminada salida de inventario de {cantidad_repuesta} unidades del producto '{producto.nombre}'."
+            )
+
+            return Response({"detalle": "Salida de inventario eliminada correctamente."}, status=status.HTTP_204_NO_CONTENT)
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al eliminar la salida: {str(e)}")
 
 # Creacion del viewset COTIZACION-PROVEEDOR
 @extend_schema_view(
@@ -876,17 +1235,56 @@ class KitViewSet(viewsets.ModelViewSet):
     permission_classes = [IsInventoryManagerOrAdmin]
 
     def perform_create(self, serializer):
-        nombre = serializer.validated_data.get("nombre")
-        if Kit.objects.filter(nombre__iexact=nombre).exists():
-            raise ValidationError("Ya existe un kit con ese nombre.")
-        return serializer.save()
+        try:
+            nombre = serializer.validated_data.get("nombre")
+            if Kit.objects.filter(nombre__iexact=nombre).exists():
+                raise ValidationError("Ya existe un kit con ese nombre.")
+            kit = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Kit",
+                id_objeto=kit.id,
+                accion="crear",
+                descripcion=f"Kit '{kit.nombre}' creado desde la API."
+            )
+        except Exception as e:
+            raise ValidationError(f"Error al crear kit: {str(e)}")
 
-    def update(self, request, *args, **kwargs):
+    def perform_update(self, serializer):
+        try:
+            kit = serializer.save()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Kit",
+                id_objeto=kit.id,
+                accion="actualizar",
+                descripcion=f"Kit '{kit.nombre}' actualizado desde la API."
+            )
+        except Exception as e:
+            raise ValidationError(f"Error al actualizar kit: {str(e)}")
+
+    def perform_destroy(self, instance):
+        try:
+            kit_id = instance.id
+            nombre = instance.nombre
+            instance.delete()
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="Kit",
+                id_objeto=kit_id,
+                accion="eliminar",
+                descripcion=f"Kit '{nombre}' eliminado desde la API."
+            )
+        except Exception as e:
+            raise ValidationError(f"Error al eliminar kit: {str(e)}")
+
+    def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        nuevo_nombre = request.data.get("nombre", "").strip()
-        if nuevo_nombre and Kit.objects.exclude(id=instance.id).filter(nombre__iexact=nuevo_nombre).exists():
-            raise ValidationError("Ya existe otro kit con ese nombre.")
-        return super().update(request, *args, **kwargs)
+        self.perform_destroy(instance)
+        return Response(
+            {"detalle": "Kit eliminado correctamente."},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 # Creacion del viewset KIT-ITEM
 @extend_schema_view(
@@ -927,22 +1325,74 @@ class KitItemViewSet(viewsets.ModelViewSet):
     permission_classes = [IsInventoryManagerOrAdmin]
 
     def perform_create(self, serializer):
-        kit = serializer.validated_data.get("kit")
-        producto = serializer.validated_data.get("producto")
+        try:
+            kit = serializer.validated_data.get("kit")
+            producto = serializer.validated_data.get("producto")
 
-        # Validar duplicidad dentro del mismo kit
-        if KitItem.objects.filter(kit=kit, producto=producto).exists():
-            raise ValidationError("Este producto ya está incluido en el kit.")
+            if KitItem.objects.filter(kit=kit, producto=producto).exists():
+                raise ValidationError("Este producto ya está incluido en el kit.")
 
-        return serializer.save()
+            item = serializer.save()
+
+            AuditoriaService.registrar(
+                usuario=self.request.user,
+                modelo="KitItem",
+                id_objeto=item.id,
+                accion="crear",
+                descripcion=f"Producto '{producto.nombre}' agregado al kit '{kit.nombre}' desde la API."
+            )
+
+            return item
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al agregar producto al kit: {str(e)}")
 
     def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        nuevo_producto = request.data.get("producto", instance.producto.id)
-        if KitItem.objects.exclude(id=instance.id).filter(kit=instance.kit_id, producto=nuevo_producto).exists():
-            raise ValidationError("Ya existe otro ítem con ese producto en este kit.")
-        return super().update(request, *args, **kwargs)
-    
+        try:
+            instance = self.get_object()
+            nuevo_producto = request.data.get("producto", instance.producto.id)
+
+            if KitItem.objects.exclude(id=instance.id).filter(kit=instance.kit_id, producto=nuevo_producto).exists():
+                raise ValidationError("Ya existe otro ítem con ese producto en este kit.")
+
+            item_actualizado = super().update(request, *args, **kwargs)
+
+            AuditoriaService.registrar(
+                usuario=request.user,
+                modelo="KitItem",
+                id_objeto=instance.id,
+                accion="actualizar",
+                descripcion=f"Ítem de kit actualizado: producto '{instance.producto.nombre}' en kit '{instance.kit.nombre}'."
+            )
+
+            return item_actualizado
+        except ValidationError as ve:
+            raise ve
+        except Exception as e:
+            raise ValidationError(f"Error al actualizar ítem del kit: {str(e)}")
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            item_id = instance.id
+            producto = instance.producto.nombre
+            kit = instance.kit.nombre
+
+            instance.delete()
+
+            AuditoriaService.registrar(
+                usuario=request.user,
+                modelo="KitItem",
+                id_objeto=item_id,
+                accion="eliminar",
+                descripcion=f"Producto '{producto}' eliminado del kit '{kit}' desde la API."
+            )
+
+            return Response({"detalle": "Producto eliminado del kit correctamente."}, status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            raise ValidationError(f"Error al eliminar ítem del kit: {str(e)}")
+
 # Creacion del viewset AUDITORIA
 @extend_schema_view(
     list=extend_schema(
