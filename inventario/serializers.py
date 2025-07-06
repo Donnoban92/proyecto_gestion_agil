@@ -1,6 +1,7 @@
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from maestranza_backend.utils.generar_rut_valido import generar_rut_valido
+from maestranza_backend.utils.validar_rut import validar_rut
 from inventario.validators import (
     validar_stock_minimo_no_negativo, validar_codigo_barra, validar_sku_formato,
     validar_fecha_fabricacion, validar_fechas_lote, 
@@ -68,7 +69,6 @@ class CustomUserSerializer(serializers.ModelSerializer):
     comuna_id = serializers.PrimaryKeyRelatedField(
         source='comuna', queryset=Comuna.objects.all(), write_only=True
     )
-
     cargo = CargoSerializer(read_only=True)
     cargo_id = serializers.PrimaryKeyRelatedField(
         source='cargo', queryset=Cargo.objects.all(), write_only=True, allow_null=True
@@ -94,9 +94,9 @@ class CustomUserSerializer(serializers.ModelSerializer):
         read_only_fields = ["date_joined"]
 
     def validate_rut(self, value):
-        from maestranza_backend.utils.generar_rut_valido import generar_rut_valido
+        from maestranza_backend.utils.validar_rut import validar_rut
         try:
-            if not generar_rut_valido(value):
+            if not validar_rut(value):
                 raise serializers.ValidationError("RUT inválido. Formato correcto: 12.345.678-9")
             return value.upper().replace(".", "")
         except Exception as e:
@@ -130,10 +130,18 @@ class CustomUserSerializer(serializers.ModelSerializer):
         try:
             role = data.get("role")
             cargo = data.get("cargo")
-            if role in ["admin", "gestor_inventario", "jefe_produccion"] and not cargo:
+
+            ROLES_QUE_REQUIEREN_CARGO = [
+                CustomUser.Roles.ADMIN,
+                CustomUser.Roles.INVENTARIO,
+                CustomUser.Roles.PRODUCCION,
+            ]
+
+            if role in ROLES_QUE_REQUIEREN_CARGO and not cargo:
                 raise serializers.ValidationError({
                     "cargo_id": f"El rol '{role}' requiere asignación de un cargo específico."
                 })
+
             return data
         except serializers.ValidationError as ve:
             raise ve
@@ -198,9 +206,10 @@ class ProveedorSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(f"Error al validar dirección: {str(e)}")
 
     def validate_rut(self, value):
+        from maestranza_backend.utils.validar_rut import validar_rut
         try:
             rut = value.replace(".", "").replace("-", "").upper()
-            if not generar_rut_valido(rut):
+            if not validar_rut(rut):
                 raise serializers.ValidationError("RUT inválido. Formato correcto: 12.345.678-9")
             return rut
         except serializers.ValidationError as ve:
@@ -615,6 +624,7 @@ class SalidaInventarioSerializer(serializers.ModelSerializer):
     producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
     sku = serializers.CharField(source='producto.sku', read_only=True)
     responsable_nombre = serializers.CharField(source='responsable.get_full_name', read_only=True, default=None)
+    responsable = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all(), required=True)
 
     class Meta:
         model = SalidaInventario
@@ -653,6 +663,11 @@ class SalidaInventarioSerializer(serializers.ModelSerializer):
             raise ve
         except Exception as e:
             raise serializers.ValidationError(f"Error al validar salida de inventario: {str(e)}")
+
+    def validate_responsable(self, value):
+        if not value:
+            raise serializers.ValidationError("Debe especificar un responsable para la salida.")
+        return value
 
 # Creacion del serializer COTIZACION-PROVEEDOR  
 class CotizacionProveedorSerializer(serializers.ModelSerializer):
